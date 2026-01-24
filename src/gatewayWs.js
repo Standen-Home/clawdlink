@@ -1,33 +1,79 @@
 import WebSocket from "ws";
 import { randomUUID } from "node:crypto";
 
-function buildWsUrl({ host, port, token }) {
-  // Gateway WS endpoint uses the same port as Control UI.
-  // Token auth is passed as a query param.
-  const url = new URL(`ws://${host}:${port}/ws`);
-  url.searchParams.set("token", token);
-  return url.toString();
+function buildWsUrl({ host, port }) {
+  // Gateway WS runs on the same port as Control UI.
+  // Path does not matter, the server accepts upgrades on any path.
+  return `ws://${host}:${port}/`;
+}
+
+async function connectWithToken(ws, { token }) {
+  // The server sends an initial connect.challenge event. We do not need the nonce
+  // for token-auth loopback connections, but we wait for it so we know the socket is alive.
+  await new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error("No connect.challenge from gateway")), 5000);
+    const onMessage = (data) => {
+      try {
+        const msg = JSON.parse(data.toString());
+        if (msg?.type === "event" && msg?.event === "connect.challenge") {
+          clearTimeout(timeout);
+          ws.off("message", onMessage);
+          resolve();
+        }
+      } catch {
+        // ignore
+      }
+    };
+    ws.on("message", onMessage);
+    ws.on("error", reject);
+  });
+
+  const connectReqId = randomUUID();
+
+  ws.send(
+    JSON.stringify({
+      type: "req",
+      id: connectReqId,
+      method: "connect",
+      params: {
+        minProtocol: 1,
+        maxProtocol: 3,
+        client: {
+          id: "clawdlink",
+          displayName: "clawdlink",
+          version: "0.1.0",
+          platform: "node",
+          mode: "cli",
+        },
+        auth: { token },
+        role: "control",
+      },
+    })
+  );
+
+  await new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error("No connect response from gateway")), 5000);
+    const onMessage = (data) => {
+      try {
+        const msg = JSON.parse(data.toString());
+        if (msg?.type === "res" && msg?.id === connectReqId) {
+          clearTimeout(timeout);
+          ws.off("message", onMessage);
+          if (msg.ok) resolve();
+          else reject(new Error(msg?.error?.message || "connect failed"));
+        }
+      } catch {
+        // ignore
+      }
+    };
+    ws.on("message", onMessage);
+    ws.on("error", reject);
+  });
 }
 
 export async function sendChatMessage({ host, port, token, sessionKey, message, deliver = true }) {
-  const wsUrl = buildWsUrl({ host, port, token });
-
+  const wsUrl = buildWsUrl({ host, port });
   const ws = new WebSocket(wsUrl);
-
-  const runId = randomUUID();
-  const idem = randomUUID();
-
-  const payload = {
-    type: "request",
-    id: runId,
-    method: "chat.send",
-    params: {
-      sessionKey,
-      message,
-      deliver,
-      idempotencyKey: idem,
-    },
-  };
 
   await new Promise((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error("WS connect timeout")), 5000);
@@ -38,15 +84,33 @@ export async function sendChatMessage({ host, port, token, sessionKey, message, 
     ws.on("error", reject);
   });
 
-  ws.send(JSON.stringify(payload));
+  await connectWithToken(ws, { token });
+
+  const reqId = randomUUID();
+  const idem = randomUUID();
+
+  ws.send(
+    JSON.stringify({
+      type: "req",
+      id: reqId,
+      method: "chat.send",
+      params: {
+        sessionKey,
+        message,
+        deliver,
+        idempotencyKey: idem,
+      },
+    })
+  );
 
   await new Promise((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error("No response from gateway")), 10000);
-    ws.on("message", (data) => {
+    const onMessage = (data) => {
       try {
         const msg = JSON.parse(data.toString());
-        if (msg?.type === "response" && msg?.id === runId) {
+        if (msg?.type === "res" && msg?.id === reqId) {
           clearTimeout(timeout);
+          ws.off("message", onMessage);
           if (msg.ok) resolve();
           else reject(new Error(msg?.error?.message || "gateway error"));
           ws.close();
@@ -54,7 +118,8 @@ export async function sendChatMessage({ host, port, token, sessionKey, message, 
       } catch {
         // ignore
       }
-    });
+    };
+    ws.on("message", onMessage);
     ws.on("error", reject);
   });
 }

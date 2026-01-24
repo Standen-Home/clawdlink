@@ -1,0 +1,14 @@
+{
+  "name": "clawdlink",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Gateway-to-gateway messaging helper for Clawd instances",
+  "bin": {
+    "clawdlink": "./bin/clawdlink.js"
+  },
+  "dependencies": {
+    "ws": "^8.16.0",
+    "yargs": "^17.7.2"
+  }
+}

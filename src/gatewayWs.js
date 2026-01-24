@@ -36,7 +36,7 @@ async function connectWithToken(ws, { token }) {
       id: connectReqId,
       method: "connect",
       params: {
-        minProtocol: 1,
+        minProtocol: 3,
         maxProtocol: 3,
         client: {
           id: "cli",
@@ -45,8 +45,7 @@ async function connectWithToken(ws, { token }) {
           platform: "node",
           mode: "cli",
         },
-        auth: { token },
-        role: "control",
+        auth: { token }
       },
     })
   );

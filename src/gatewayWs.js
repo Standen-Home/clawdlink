@@ -39,7 +39,7 @@ async function connectWithToken(ws, { token }) {
         minProtocol: 1,
         maxProtocol: 3,
         client: {
-          id: "clawdlink",
+          id: "cli",
           displayName: "clawdlink",
           version: "0.1.0",
           platform: "node",
